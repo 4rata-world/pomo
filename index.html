@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ポモドーロタイマー</title>
+<style>
+  :root {
+    --bg: #f5f3ef;
+    --card: #ffffff;
+    --text: #2b2b2b;
+    --sub: #7a7a7a;
+    --work: #e4572e;
+    --break: #17a589;
+    --btn: #2b2b2b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e;
+      --card: #2a2a2d;
+      --text: #f0f0f0;
+      --sub: #9a9a9a;
+      --btn: #f0f0f0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif;
+    padding: 16px;
+  }
+  .card {
+    background: var(--card);
+    border-radius: 24px;
+    padding: 32px 28px;
+    width: 100%;
+    max-width: 360px;
+    text-align: center;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+  }
+  .mode {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    margin-bottom: 8px;
+  }
+  .mode.work { color: var(--work); }
+  .mode.break { color: var(--break); }
+  .time {
+    font-size: 72px;
+    font-weight: 300;
+    font-variant-numeric: tabular-nums;
+    margin: 12px 0 20px;
+  }
+  .progress {
+    height: 6px;
+    background: rgba(128,128,128,0.2);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+  .progress-bar {
+    height: 100%;
+    width: 0%;
+    transition: width 0.5s linear;
+  }
+  .progress-bar.work { background: var(--work); }
+  .progress-bar.break { background: var(--break); }
+  .controls {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+  button {
+    border: none;
+    border-radius: 999px;
+    padding: 12px 24px;
+    font-size: 16px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .primary {
+    background: var(--btn);
+    color: var(--card);
+    min-width: 120px;
+  }
+  .ghost {
+    background: transparent;
+    color: var(--sub);
+    border: 1px solid rgba(128,128,128,0.3);
+  }
+  .settings {
+    margin-top: 24px;
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    align-items: center;
+    font-size: 13px;
+    color: var(--sub);
+    flex-wrap: wrap;
+  }
+  .settings input {
+    width: 56px;
+    padding: 6px;
+    border-radius: 8px;
+    border: 1px solid rgba(128,128,128,0.3);
+    background: transparent;
+    color: var(--text);
+    text-align: center;
+    font-family: inherit;
+  }
+  .count {
+    margin-top: 18px;
+    font-size: 13px;
+    color: var(--sub);
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div id="mode" class="mode work">作業</div>
+  <div id="time" class="time">25:00</div>
+  <div class="progress"><div id="bar" class="progress-bar work"></div></div>
+
+  <div class="controls">
+    <button id="toggle" class="primary">スタート</button>
+    <button id="reset" class="ghost">リセット</button>
+  </div>
+
+  <div class="settings">
+    作業
+    <input id="workMin" type="number" min="1" max="120" value="25"> 分
+    ／ 休憩
+    <input id="breakMin" type="number" min="1" max="60" value="5"> 分
+  </div>
+
+  <div id="count" class="count">完了したポモドーロ: 0</div>
+</div>
+
+<script>
+  const modeEl = document.getElementById("mode");
+  const timeEl = document.getElementById("time");
+  const barEl = document.getElementById("bar");
+  const toggleBtn = document.getElementById("toggle");
+  const resetBtn = document.getElementById("reset");
+  const workInput = document.getElementById("workMin");
+  const breakInput = document.getElementById("breakMin");
+  const countEl = document.getElementById("count");
+
+  let isWork = true;
+  let totalSec = 25 * 60;
+  let remainSec = totalSec;
+  let timerId = null;
+  let completed = 0;
+
+  function fmt(sec) {
+    const m = Math.floor(sec / 60).toString().padStart(2, "0");
+    const s = (sec % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  }
+
+  function render() {
+    timeEl.textContent = fmt(remainSec);
+    const ratio = totalSec ? (totalSec - remainSec) / totalSec : 0;
+    barEl.style.width = `${ratio * 100}%`;
+    modeEl.textContent = isWork ? "作業" : "休憩";
+    modeEl.className = "mode " + (isWork ? "work" : "break");
+    barEl.className = "progress-bar " + (isWork ? "work" : "break");
+    document.title = `${fmt(remainSec)} ${isWork ? "作業" : "休憩"} - ポモドーロ`;
+    countEl.textContent = `完了したポモドーロ: ${completed}`;
+  }
+
+  function getMinutes(input, fallback) {
+    const v = parseInt(input.value, 10);
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+  }
+
+  function setPhase(work) {
+    isWork = work;
+    totalSec = (isWork ? getMinutes(workInput, 25) : getMinutes(breakInput, 5)) * 60;
+    remainSec = totalSec;
+    render();
+  }
+
+  function notify(message) {
+    try {
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification(message);
+      }
+    } catch (e) {}
+  }
+
+  function beep() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1);
+      osc.start();
+      osc.stop(ctx.currentTime + 1);
+    } catch (e) {}
+  }
+
+  // 終了時刻ベースで計測するので、タブが裏に回ってもズレない
+  let endAt = 0;
+
+  function calcRemain() {
+    return Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+  }
+
+  function tick() {
+    remainSec = calcRemain();
+    if (remainSec <= 0) {
+      beep();
+      if (isWork) {
+        completed++;
+        notify("作業終了！休憩しましょう");
+        setPhase(false);
+      } else {
+        notify("休憩終了！作業を再開しましょう");
+        setPhase(true);
+      }
+      // 自動で次のフェーズは開始せず、ユーザーの操作を待つ
+      halt();
+      return;
+    }
+    render();
+  }
+
+  function start() {
+    if (timerId) return;
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+    endAt = Date.now() + remainSec * 1000;
+    timerId = setInterval(tick, 250);
+    toggleBtn.textContent = "一時停止";
+  }
+
+  function halt() {
+    clearInterval(timerId);
+    timerId = null;
+    toggleBtn.textContent = "スタート";
+  }
+
+  function pause() {
+    if (timerId) remainSec = calcRemain();
+    halt();
+    render();
+  }
+
+  toggleBtn.addEventListener("click", () => {
+    timerId ? pause() : start();
+  });
+
+  resetBtn.addEventListener("click", () => {
+    halt();
+    setPhase(isWork);
+  });
+
+  workInput.addEventListener("change", () => { if (!timerId && isWork) setPhase(true); });
+  breakInput.addEventListener("change", () => { if (!timerId && !isWork) setPhase(false); });
+
+  setPhase(true);
+</script>
+</body>
+</html>
