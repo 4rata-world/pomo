@@ -1,5 +1,5 @@
-const CACHE = "pomodoro-v1";
-const ASSETS = ["./", "index.html", "manifest.json", "icon-192.png", "icon-512.png"];
+const CACHE = "pomodoro-v3";
+const ASSETS = ["./", "index.html", "manifest.json", "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -16,6 +16,7 @@ self.addEventListener("activate", (e) => {
 // ネットワーク優先、オフライン時はキャッシュ
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
+  if (new URL(e.request.url).origin !== location.origin) return; // YouTube/Spotify等は素通し
   e.respondWith(
     fetch(e.request)
       .then((res) => {
