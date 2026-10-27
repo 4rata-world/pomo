@@ -6,7 +6,7 @@
 <title>ポモドーロタイマー</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" id="favicon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="theme-color" content="#e4572e">
 <style>
   :root {
@@ -206,6 +206,18 @@
   .chart .b.today { background: var(--work); }
   .chart .lab { font-size: 10px; height: 14px; line-height: 14px; }
   .hint { font-size: 11px; opacity: 0.8; }
+  .more input[type="url"] {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(128,128,128,0.3);
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .bgm { margin-top: 18px; border-radius: 12px; overflow: hidden; }
+  .bgm iframe { display: block; width: 100%; border: 0; }
 </style>
 </head>
 <body>
@@ -232,6 +244,8 @@
 
   <div id="count" class="count">完了したポモドーロ: 0</div>
 
+  <div id="bgm" class="bgm" hidden><div id="bgmHost"></div></div>
+
   <details class="more">
     <summary>詳細設定・統計 ▾</summary>
     <div class="row">
@@ -254,6 +268,19 @@
       音量
       <input id="volume" type="range" min="0" max="100" value="50">
     </div>
+    <div class="row">
+      BGM
+      <select id="bgmType">
+        <option value="none">なし</option>
+        <option value="youtube">YouTube</option>
+        <option value="spotify">Spotify</option>
+      </select>
+      <label><input id="bgmWorkOnly" type="checkbox"> 作業中だけ再生</label>
+    </div>
+    <div class="row">
+      <input id="bgmUrl" type="url" placeholder="YouTube / Spotify のURLを貼る" aria-label="BGMのURL">
+    </div>
+    <div class="row hint" id="bgmMsg"></div>
     <div class="row" id="weekTotal"></div>
     <div id="chart" class="chart"></div>
     <div class="row hint">Space: 開始/一時停止 ・ S: スキップ ・ R: リセット</div>
@@ -283,7 +310,8 @@
   const STORE = "pomodoro.v1";
   const defaults = {
     work: 25, brk: 5, long: 15, every: 4,
-    auto: false, sound: "beep", volume: 50, theme: "auto", task: ""
+    auto: false, sound: "beep", volume: 50, theme: "auto", task: "",
+    bgmType: "none", bgmUrl: "", bgmWorkOnly: true
   };
   let cfg = { ...defaults };
   let stats = {};      // { "YYYY-MM-DD": 作業した分数 }
@@ -532,6 +560,158 @@
     }
   });
 
+  /* ---------- BGM（YouTube / Spotify 埋め込み） ---------- */
+  const bgmBox = $("bgm");
+  const bgmHost = $("bgmHost");
+  const bgmMsg = $("bgmMsg");
+  const bgmTypeSel = $("bgmType");
+  const bgmUrlInput = $("bgmUrl");
+  const bgmWorkOnlyInput = $("bgmWorkOnly");
+  let bgm = null;      // { ready, play(), pause(), destroy() }
+  let bgmToken = 0;
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.async = true;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  let ytReady = null;
+  function loadYT() {
+    if (ytReady) return ytReady;
+    ytReady = new Promise((resolve, reject) => {
+      if (window.YT && window.YT.Player) return resolve();
+      const prev = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => { if (prev) prev(); resolve(); };
+      loadScript("https://www.youtube.com/iframe_api").catch(reject);
+    });
+    ytReady.catch(() => { ytReady = null; });
+    return ytReady;
+  }
+
+  let spReady = null;
+  function loadSpotify() {
+    if (spReady) return spReady;
+    spReady = new Promise((resolve, reject) => {
+      window.onSpotifyIframeApiReady = (api) => resolve(api);
+      loadScript("https://open.spotify.com/embed/iframe-api/v1").catch(reject);
+    });
+    spReady.catch(() => { spReady = null; });
+    return spReady;
+  }
+
+  function parseYouTube(url) {
+    try {
+      const u = new URL(url.trim());
+      let id = "";
+      const list = u.searchParams.get("list") || "";
+      if (u.hostname === "youtu.be") {
+        id = u.pathname.slice(1);
+      } else if (u.hostname.endsWith("youtube.com")) {
+        if (u.pathname === "/watch") id = u.searchParams.get("v") || "";
+        else {
+          const m = u.pathname.match(/^\/(?:embed|shorts|live)\/([\w-]{11})/);
+          if (m) id = m[1];
+        }
+      } else {
+        return null;
+      }
+      if (id && !/^[\w-]{11}$/.test(id)) id = "";
+      if (!id && !list) return null;
+      return { id, list };
+    } catch (e) { return null; }
+  }
+
+  function parseSpotify(url) {
+    const s = url.trim();
+    let m = s.match(/^spotify:(playlist|album|track|episode|show|artist):([A-Za-z0-9]+)$/);
+    if (m) return s;
+    try {
+      const u = new URL(s);
+      if (u.hostname !== "open.spotify.com") return null;
+      m = u.pathname.match(/^\/(?:intl-[a-z-]+\/)?(playlist|album|track|episode|show|artist)\/([A-Za-z0-9]+)/);
+      return m ? `spotify:${m[1]}:${m[2]}` : null;
+    } catch (e) { return null; }
+  }
+
+  function detectType(url) {
+    if (/^spotify:/.test(url.trim()) || /open\.spotify\.com/.test(url)) return "spotify";
+    if (/youtu\.be|youtube\.com/.test(url)) return "youtube";
+    return null;
+  }
+
+  // タイマーの状態に合わせて再生/停止を揃える
+  function syncBgm() {
+    if (!bgm || !bgm.ready) return;
+    const shouldPlay = !!timerId && (isWork() || !cfg.bgmWorkOnly);
+    try { shouldPlay ? bgm.play() : bgm.pause(); } catch (e) {}
+  }
+
+  async function buildBgm() {
+    const token = ++bgmToken;
+    if (bgm) { try { bgm.destroy(); } catch (e) {} bgm = null; }
+    bgmHost.innerHTML = "";
+    bgmMsg.textContent = "";
+    bgmBox.hidden = true;
+
+    const url = cfg.bgmUrl.trim();
+    if (cfg.bgmType === "none" || !url) return;
+
+    const el = document.createElement("div");
+    bgmHost.appendChild(el);
+
+    if (cfg.bgmType === "youtube") {
+      const p = parseYouTube(url);
+      if (!p) { bgmMsg.textContent = "YouTubeのURLが読み取れませんでした"; return; }
+      bgmBox.hidden = false;
+      try { await loadYT(); } catch (e) { bgmMsg.textContent = "YouTubeを読み込めませんでした"; return; }
+      if (token !== bgmToken) return;
+      const playerVars = { playsinline: 1, rel: 0, loop: 1 };
+      const opts = { width: "100%", height: "180", playerVars };
+      if (p.id) opts.videoId = p.id;
+      if (p.list) { playerVars.listType = "playlist"; playerVars.list = p.list; }
+      else playerVars.playlist = p.id; // 単体動画のループ用
+      const obj = { ready: false, play() {}, pause() {}, destroy() {} };
+      bgm = obj;
+      const player = new YT.Player(el, {
+        ...opts,
+        events: {
+          onReady: () => {
+            if (bgm !== obj) return;
+            obj.ready = true;
+            obj.play = () => player.playVideo();
+            obj.pause = () => player.pauseVideo();
+            syncBgm();
+          }
+        }
+      });
+      obj.destroy = () => player.destroy();
+    } else {
+      const uri = parseSpotify(url);
+      if (!uri) { bgmMsg.textContent = "SpotifyのURLが読み取れませんでした"; return; }
+      bgmBox.hidden = false;
+      let api;
+      try { api = await loadSpotify(); } catch (e) { bgmMsg.textContent = "Spotifyを読み込めませんでした"; return; }
+      if (token !== bgmToken) return;
+      api.createController(el, { uri, width: "100%", height: 152 }, (ctrl) => {
+        if (token !== bgmToken) { try { ctrl.destroy(); } catch (e) {} return; }
+        const obj = {
+          ready: false,
+          play: () => ctrl.play(),
+          pause: () => ctrl.pause(),
+          destroy: () => ctrl.destroy()
+        };
+        bgm = obj;
+        ctrl.addListener("ready", () => { obj.ready = true; syncBgm(); });
+      });
+    }
+  }
+
   /* ---------- タイマー本体 ---------- */
   // 終了時刻ベースで計測するので、タブが裏に回ってもズレない
   function calcRemain() {
@@ -567,6 +747,7 @@
     timerId = setInterval(tick, 250);
     toggleBtn.textContent = "一時停止";
     lockScreen();
+    syncBgm();
   }
 
   function halt() {
@@ -574,6 +755,7 @@
     timerId = null;
     toggleBtn.textContent = "スタート";
     unlockScreen();
+    syncBgm();
   }
 
   function pause() {
@@ -643,6 +825,18 @@
   soundSel.addEventListener("change", () => { cfg.sound = soundSel.value; save(); playSound(); });
   volumeInput.addEventListener("input", () => { cfg.volume = parseInt(volumeInput.value, 10); save(); });
   volumeInput.addEventListener("change", playSound);
+  function onBgmUrlChange() {
+    cfg.bgmUrl = bgmUrlInput.value.trim();
+    const t = detectType(cfg.bgmUrl);
+    if (t) { cfg.bgmType = t; bgmTypeSel.value = t; }
+    save();
+    buildBgm();
+  }
+  bgmUrlInput.addEventListener("change", onBgmUrlChange);
+  bgmUrlInput.addEventListener("paste", () => setTimeout(onBgmUrlChange, 0));
+  bgmTypeSel.addEventListener("change", () => { cfg.bgmType = bgmTypeSel.value; save(); buildBgm(); });
+  bgmWorkOnlyInput.addEventListener("change", () => { cfg.bgmWorkOnly = bgmWorkOnlyInput.checked; save(); syncBgm(); });
+
   taskInput.addEventListener("input", () => { cfg.task = taskInput.value; save(); render(); });
 
   /* ---------- テーマ（自動 → ライト → ダーク） ---------- */
@@ -671,7 +865,11 @@
   soundSel.value = cfg.sound;
   volumeInput.value = cfg.volume;
   taskInput.value = cfg.task;
+  bgmTypeSel.value = cfg.bgmType;
+  bgmUrlInput.value = cfg.bgmUrl;
+  bgmWorkOnlyInput.checked = cfg.bgmWorkOnly;
   applyTheme();
+  buildBgm();
   setPhase("work");
   renderChart();
 
