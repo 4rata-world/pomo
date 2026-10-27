@@ -275,7 +275,6 @@
         <option value="youtube">YouTube</option>
         <option value="spotify">Spotify</option>
       </select>
-      <label><input id="bgmWorkOnly" type="checkbox"> 作業中だけ再生</label>
     </div>
     <div class="row">
       <input id="bgmUrl" type="url" placeholder="YouTube / Spotify のURLを貼る" aria-label="BGMのURL">
@@ -311,7 +310,7 @@
   const defaults = {
     work: 25, brk: 5, long: 15, every: 4,
     auto: false, sound: "beep", volume: 50, theme: "auto", task: "",
-    bgmType: "none", bgmUrl: "", bgmWorkOnly: true
+    bgmType: "none", bgmUrl: ""
   };
   let cfg = { ...defaults };
   let stats = {};      // { "YYYY-MM-DD": 作業した分数 }
@@ -566,8 +565,8 @@
   const bgmMsg = $("bgmMsg");
   const bgmTypeSel = $("bgmType");
   const bgmUrlInput = $("bgmUrl");
-  const bgmWorkOnlyInput = $("bgmWorkOnly");
-  let bgm = null;      // { ready, play(), pause(), destroy() }
+  // BGMはタイマーとは独立。再生・停止・曲送りはプレーヤー側で操作する
+  let bgm = null;      // { destroy() }
   let bgmToken = 0;
 
   function loadScript(src) {
@@ -645,13 +644,6 @@
     return null;
   }
 
-  // タイマーの状態に合わせて再生/停止を揃える
-  function syncBgm() {
-    if (!bgm || !bgm.ready) return;
-    const shouldPlay = !!timerId && (isWork() || !cfg.bgmWorkOnly);
-    try { shouldPlay ? bgm.play() : bgm.pause(); } catch (e) {}
-  }
-
   async function buildBgm() {
     const token = ++bgmToken;
     if (bgm) { try { bgm.destroy(); } catch (e) {} bgm = null; }
@@ -676,21 +668,8 @@
       if (p.id) opts.videoId = p.id;
       if (p.list) { playerVars.listType = "playlist"; playerVars.list = p.list; }
       else playerVars.playlist = p.id; // 単体動画のループ用
-      const obj = { ready: false, play() {}, pause() {}, destroy() {} };
-      bgm = obj;
-      const player = new YT.Player(el, {
-        ...opts,
-        events: {
-          onReady: () => {
-            if (bgm !== obj) return;
-            obj.ready = true;
-            obj.play = () => player.playVideo();
-            obj.pause = () => player.pauseVideo();
-            syncBgm();
-          }
-        }
-      });
-      obj.destroy = () => player.destroy();
+      const player = new YT.Player(el, opts);
+      bgm = { destroy: () => player.destroy() };
     } else {
       const uri = parseSpotify(url);
       if (!uri) { bgmMsg.textContent = "SpotifyのURLが読み取れませんでした"; return; }
@@ -698,16 +677,11 @@
       let api;
       try { api = await loadSpotify(); } catch (e) { bgmMsg.textContent = "Spotifyを読み込めませんでした"; return; }
       if (token !== bgmToken) return;
-      api.createController(el, { uri, width: "100%", height: 152 }, (ctrl) => {
+      // 単曲は小さく、プレイリスト/アルバムは曲一覧が見える大きさで表示
+      const isList = /^spotify:(playlist|album|show|artist):/.test(uri);
+      api.createController(el, { uri, width: "100%", height: isList ? 352 : 152 }, (ctrl) => {
         if (token !== bgmToken) { try { ctrl.destroy(); } catch (e) {} return; }
-        const obj = {
-          ready: false,
-          play: () => ctrl.play(),
-          pause: () => ctrl.pause(),
-          destroy: () => ctrl.destroy()
-        };
-        bgm = obj;
-        ctrl.addListener("ready", () => { obj.ready = true; syncBgm(); });
+        bgm = { destroy: () => ctrl.destroy() };
       });
     }
   }
@@ -747,7 +721,6 @@
     timerId = setInterval(tick, 250);
     toggleBtn.textContent = "一時停止";
     lockScreen();
-    syncBgm();
   }
 
   function halt() {
@@ -755,7 +728,6 @@
     timerId = null;
     toggleBtn.textContent = "スタート";
     unlockScreen();
-    syncBgm();
   }
 
   function pause() {
@@ -835,7 +807,6 @@
   bgmUrlInput.addEventListener("change", onBgmUrlChange);
   bgmUrlInput.addEventListener("paste", () => setTimeout(onBgmUrlChange, 0));
   bgmTypeSel.addEventListener("change", () => { cfg.bgmType = bgmTypeSel.value; save(); buildBgm(); });
-  bgmWorkOnlyInput.addEventListener("change", () => { cfg.bgmWorkOnly = bgmWorkOnlyInput.checked; save(); syncBgm(); });
 
   taskInput.addEventListener("input", () => { cfg.task = taskInput.value; save(); render(); });
 
@@ -867,7 +838,6 @@
   taskInput.value = cfg.task;
   bgmTypeSel.value = cfg.bgmType;
   bgmUrlInput.value = cfg.bgmUrl;
-  bgmWorkOnlyInput.checked = cfg.bgmWorkOnly;
   applyTheme();
   buildBgm();
   setPhase("work");
