@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ポモドーロタイマー</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" id="favicon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#e4572e">
 <style>
   :root {
     --bg: #f5f3ef;
@@ -15,13 +19,20 @@
     --btn: #2b2b2b;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #1c1c1e;
       --card: #2a2a2d;
       --text: #f0f0f0;
       --sub: #9a9a9a;
       --btn: #f0f0f0;
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1c1c1e;
+    --card: #2a2a2d;
+    --text: #f0f0f0;
+    --sub: #9a9a9a;
+    --btn: #f0f0f0;
   }
   * { box-sizing: border-box; }
   body {
@@ -36,6 +47,7 @@
     padding: 16px;
   }
   .card {
+    position: relative;
     background: var(--card);
     border-radius: 24px;
     padding: 32px 28px;
@@ -43,6 +55,19 @@
     max-width: 360px;
     text-align: center;
     box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+  }
+  .theme-btn {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    font-size: 16px;
+    line-height: 32px;
+    background: transparent;
+    color: var(--sub);
+    border-radius: 50%;
   }
   .mode {
     font-size: 15px;
@@ -52,6 +77,19 @@
   }
   .mode.work { color: var(--work); }
   .mode.break { color: var(--break); }
+  .task {
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid rgba(128,128,128,0.25);
+    background: transparent;
+    color: var(--text);
+    text-align: center;
+    font-size: 14px;
+    font-family: inherit;
+    padding: 4px 6px;
+    outline: none;
+  }
+  .task:focus { border-bottom-color: var(--sub); }
   .time {
     font-size: 72px;
     font-weight: 300;
@@ -85,16 +123,18 @@
     cursor: pointer;
     font-family: inherit;
   }
+  .controls button { padding: 12px 16px; }
   .primary {
     background: var(--btn);
     color: var(--card);
-    min-width: 120px;
+    min-width: 100px;
   }
   .ghost {
     background: transparent;
     color: var(--sub);
     border: 1px solid rgba(128,128,128,0.3);
   }
+  .controls .ghost { font-size: 14px; }
   .settings {
     margin-top: 24px;
     display: flex;
@@ -105,7 +145,7 @@
     color: var(--sub);
     flex-wrap: wrap;
   }
-  .settings input {
+  .settings input[type="number"], .more select {
     width: 56px;
     padding: 6px;
     border-radius: 8px;
@@ -120,16 +160,66 @@
     font-size: 13px;
     color: var(--sub);
   }
+  .more {
+    margin-top: 18px;
+    font-size: 13px;
+    color: var(--sub);
+  }
+  .more summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  .more summary::-webkit-details-marker { display: none; }
+  .more[open] summary { margin-bottom: 4px; }
+  .more .row {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+  .more select { width: auto; text-align: left; }
+  .more input[type="range"] { width: 100px; }
+  .more label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .chart {
+    display: flex;
+    gap: 6px;
+    height: 96px;
+    margin-top: 12px;
+  }
+  .chart .col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 0;
+  }
+  .chart .val { font-size: 10px; height: 14px; line-height: 14px; }
+  .chart .barbox { flex: 1; width: 100%; display: flex; align-items: flex-end; }
+  .chart .b {
+    width: 100%;
+    background: rgba(128,128,128,0.35);
+    border-radius: 3px 3px 0 0;
+  }
+  .chart .b.today { background: var(--work); }
+  .chart .lab { font-size: 10px; height: 14px; line-height: 14px; }
+  .hint { font-size: 11px; opacity: 0.8; }
 </style>
 </head>
 <body>
 <div class="card">
+  <button id="themeBtn" class="theme-btn" title="テーマ切り替え" aria-label="テーマ切り替え">◐</button>
+
   <div id="mode" class="mode work">作業</div>
+  <input id="task" class="task" type="text" maxlength="60" placeholder="いま集中すること" aria-label="いま集中すること">
   <div id="time" class="time">25:00</div>
   <div class="progress"><div id="bar" class="progress-bar work"></div></div>
 
   <div class="controls">
     <button id="toggle" class="primary">スタート</button>
+    <button id="skip" class="ghost">スキップ</button>
     <button id="reset" class="ghost">リセット</button>
   </div>
 
@@ -141,23 +231,110 @@
   </div>
 
   <div id="count" class="count">完了したポモドーロ: 0</div>
+
+  <details class="more">
+    <summary>詳細設定・統計 ▾</summary>
+    <div class="row">
+      長い休憩
+      <input id="longMin" type="number" min="1" max="90" value="15"> 分
+      ／
+      <input id="every" type="number" min="2" max="12" value="4"> 回ごと
+    </div>
+    <div class="row">
+      <label><input id="auto" type="checkbox"> 次のフェーズを自動で開始</label>
+    </div>
+    <div class="row">
+      音
+      <select id="sound">
+        <option value="beep">ビープ</option>
+        <option value="bell">ベル</option>
+        <option value="chime">チャイム</option>
+        <option value="none">なし</option>
+      </select>
+      音量
+      <input id="volume" type="range" min="0" max="100" value="50">
+    </div>
+    <div class="row" id="weekTotal"></div>
+    <div id="chart" class="chart"></div>
+    <div class="row hint">Space: 開始/一時停止 ・ S: スキップ ・ R: リセット</div>
+  </details>
 </div>
 
 <script>
-  const modeEl = document.getElementById("mode");
-  const timeEl = document.getElementById("time");
-  const barEl = document.getElementById("bar");
-  const toggleBtn = document.getElementById("toggle");
-  const resetBtn = document.getElementById("reset");
-  const workInput = document.getElementById("workMin");
-  const breakInput = document.getElementById("breakMin");
-  const countEl = document.getElementById("count");
+  const $ = (id) => document.getElementById(id);
+  const modeEl = $("mode");
+  const timeEl = $("time");
+  const barEl = $("bar");
+  const toggleBtn = $("toggle");
+  const skipBtn = $("skip");
+  const resetBtn = $("reset");
+  const workInput = $("workMin");
+  const breakInput = $("breakMin");
+  const longInput = $("longMin");
+  const everyInput = $("every");
+  const autoInput = $("auto");
+  const soundSel = $("sound");
+  const volumeInput = $("volume");
+  const taskInput = $("task");
+  const themeBtn = $("themeBtn");
+  const countEl = $("count");
 
-  let isWork = true;
+  /* ---------- 保存データ ---------- */
+  const STORE = "pomodoro.v1";
+  const defaults = {
+    work: 25, brk: 5, long: 15, every: 4,
+    auto: false, sound: "beep", volume: 50, theme: "auto", task: ""
+  };
+  let cfg = { ...defaults };
+  let stats = {};      // { "YYYY-MM-DD": 作業した分数 }
+  let dayKey = "";
+  let completed = 0;   // 今日完了したポモドーロ数
+
+  function keyOf(d) {
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${m}-${day}`;
+  }
+  const todayKey = () => keyOf(new Date());
+
+  function save() {
+    try {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 60);
+      const ck = keyOf(cutoff);
+      Object.keys(stats).forEach((k) => { if (k < ck) delete stats[k]; });
+      localStorage.setItem(STORE, JSON.stringify({ cfg, stats, day: dayKey, completed }));
+    } catch (e) {}
+  }
+
+  function ensureToday() {
+    const t = todayKey();
+    if (dayKey !== t) {
+      dayKey = t;
+      completed = 0;   // 日付が変わったらカウントをリセット
+      save();
+    }
+  }
+
+  function load() {
+    let s = {};
+    try { s = JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) {}
+    cfg = { ...defaults, ...(s.cfg || {}) };
+    stats = s.stats || {};
+    dayKey = s.day || todayKey();
+    completed = s.completed || 0;
+    ensureToday();
+  }
+
+  /* ---------- 状態 ---------- */
+  let kind = "work"; // "work" | "break" | "long"
   let totalSec = 25 * 60;
   let remainSec = totalSec;
   let timerId = null;
-  let completed = 0;
+  let endAt = 0;
+
+  const isWork = () => kind === "work";
+  const kindLabel = () => ({ work: "作業", break: "休憩", long: "長い休憩" }[kind]);
 
   function fmt(sec) {
     const m = Math.floor(sec / 60).toString().padStart(2, "0");
@@ -165,29 +342,125 @@
     return `${m}:${s}`;
   }
 
-  function render() {
-    timeEl.textContent = fmt(remainSec);
-    const ratio = totalSec ? (totalSec - remainSec) / totalSec : 0;
-    barEl.style.width = `${ratio * 100}%`;
-    modeEl.textContent = isWork ? "作業" : "休憩";
-    modeEl.className = "mode " + (isWork ? "work" : "break");
-    barEl.className = "progress-bar " + (isWork ? "work" : "break");
-    document.title = `${fmt(remainSec)} ${isWork ? "作業" : "休憩"} - ポモドーロ`;
-    countEl.textContent = `完了したポモドーロ: ${completed}`;
-  }
-
   function getMinutes(input, fallback) {
     const v = parseInt(input.value, 10);
     return Number.isFinite(v) && v > 0 ? v : fallback;
   }
 
-  function setPhase(work) {
-    isWork = work;
-    totalSec = (isWork ? getMinutes(workInput, 25) : getMinutes(breakInput, 5)) * 60;
+  const workMinutes = () => getMinutes(workInput, 25);
+  const everyCount = () => Math.max(2, getMinutes(everyInput, 4));
+
+  function durationFor(k) {
+    if (k === "work") return workMinutes() * 60;
+    if (k === "long") return getMinutes(longInput, 15) * 60;
+    return getMinutes(breakInput, 5) * 60;
+  }
+
+  /* ---------- 描画 ---------- */
+  function render() {
+    timeEl.textContent = fmt(remainSec);
+    const ratio = totalSec ? (totalSec - remainSec) / totalSec : 0;
+    barEl.style.width = `${ratio * 100}%`;
+    modeEl.textContent = kindLabel();
+    const cls = isWork() ? "work" : "break";
+    modeEl.className = "mode " + cls;
+    barEl.className = "progress-bar " + cls;
+    const task = taskInput.value.trim();
+    document.title = `${fmt(remainSec)} ${kindLabel()}${task ? "・" + task : ""} - ポモドーロ`;
+    const todayMin = stats[dayKey] || 0;
+    countEl.textContent = `完了したポモドーロ: ${completed} ／ 今日の作業 ${todayMin}分`;
+    updateFavicon();
+  }
+
+  function renderChart() {
+    const box = $("chart");
+    box.innerHTML = "";
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      days.push(d);
+    }
+    const vals = days.map((d) => stats[keyOf(d)] || 0);
+    const max = Math.max(...vals, 1);
+    const names = ["日", "月", "火", "水", "木", "金", "土"];
+    days.forEach((d, i) => {
+      const col = document.createElement("div");
+      col.className = "col";
+      col.title = `${d.getMonth() + 1}/${d.getDate()}: ${vals[i]}分`;
+      const v = document.createElement("div");
+      v.className = "val";
+      v.textContent = vals[i] || "";
+      const bb = document.createElement("div");
+      bb.className = "barbox";
+      const b = document.createElement("div");
+      b.className = "b" + (i === 6 ? " today" : "");
+      b.style.height = `${vals[i] ? Math.max((vals[i] / max) * 100, 4) : 2}%`;
+      bb.appendChild(b);
+      const l = document.createElement("div");
+      l.className = "lab";
+      l.textContent = names[d.getDay()];
+      col.append(v, bb, l);
+      box.appendChild(col);
+    });
+    const total = vals.reduce((a, b) => a + b, 0);
+    $("weekTotal").textContent = `直近7日の作業時間: ${total}分`;
+  }
+
+  /* ---------- ファビコンに残り時間 ---------- */
+  const favCanvas = document.createElement("canvas");
+  favCanvas.width = favCanvas.height = 64;
+  let lastFav = "";
+  function updateFavicon() {
+    try {
+      const label = String(Math.ceil(remainSec / 60));
+      const key = label + kind;
+      if (key === lastFav) return;
+      lastFav = key;
+      const c = favCanvas.getContext("2d");
+      c.clearRect(0, 0, 64, 64);
+      c.fillStyle = isWork() ? "#e4572e" : "#17a589";
+      c.beginPath();
+      c.arc(32, 32, 30, 0, Math.PI * 2);
+      c.fill();
+      c.fillStyle = "#fff";
+      c.font = `bold ${label.length >= 3 ? 26 : 36}px sans-serif`;
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      c.fillText(label, 32, 35);
+      $("favicon").href = favCanvas.toDataURL("image/png");
+    } catch (e) {}
+  }
+
+  /* ---------- フェーズ ---------- */
+  function setPhase(k) {
+    kind = k;
+    totalSec = durationFor(kind);
     remainSec = totalSec;
     render();
   }
 
+  // counted: 作業を最後までやり切ったか（スキップ時は false）
+  function advance(counted) {
+    ensureToday();
+    let next;
+    if (kind === "work") {
+      if (counted) {
+        completed++;
+        stats[dayKey] = (stats[dayKey] || 0) + workMinutes();
+        next = completed % everyCount() === 0 ? "long" : "break";
+      } else {
+        next = "break";
+      }
+    } else {
+      next = "work";
+    }
+    save();
+    setPhase(next);
+    renderChart();
+  }
+
+  /* ---------- 通知・音 ---------- */
   function notify(message) {
     try {
       if ("Notification" in window && Notification.permission === "granted") {
@@ -196,24 +469,71 @@
     } catch (e) {}
   }
 
-  function beep() {
+  let actx = null;
+  function audio() {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = 880;
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1);
-      osc.start();
-      osc.stop(ctx.currentTime + 1);
+      if (!actx) {
+        const C = window.AudioContext || window.webkitAudioContext;
+        if (C) actx = new C();
+      }
+      if (actx && actx.state === "suspended") actx.resume();
     } catch (e) {}
+    return actx;
   }
 
-  // 終了時刻ベースで計測するので、タブが裏に回ってもズレない
-  let endAt = 0;
+  function tone(ctx, freq, start, dur, type, vol) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(Math.max(vol * 0.4, 0.002), start);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+    osc.start(start);
+    osc.stop(start + dur);
+  }
 
+  function playSound() {
+    if (cfg.sound === "none" || cfg.volume <= 0) return;
+    const ctx = audio();
+    if (!ctx) return;
+    const v = cfg.volume / 100;
+    const t = ctx.currentTime;
+    if (cfg.sound === "bell") {
+      tone(ctx, 660, t, 1.4, "triangle", v);
+      tone(ctx, 990, t + 0.02, 1.0, "triangle", v * 0.6);
+    } else if (cfg.sound === "chime") {
+      [523.25, 659.25, 783.99].forEach((f, i) => tone(ctx, f, t + i * 0.22, 0.9, "sine", v));
+    } else {
+      tone(ctx, 880, t, 1, "sine", v);
+    }
+  }
+
+  /* ---------- 画面スリープ防止 ---------- */
+  let wakeLock = null;
+  async function lockScreen() {
+    try {
+      if ("wakeLock" in navigator && !wakeLock) {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", () => { wakeLock = null; });
+      }
+    } catch (e) { wakeLock = null; }
+  }
+  function unlockScreen() {
+    try { if (wakeLock) wakeLock.release(); } catch (e) {}
+    wakeLock = null;
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      if (timerId) lockScreen();
+      ensureToday();
+      render();
+    }
+  });
+
+  /* ---------- タイマー本体 ---------- */
+  // 終了時刻ベースで計測するので、タブが裏に回ってもズレない
   function calcRemain() {
     return Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
   }
@@ -221,17 +541,17 @@
   function tick() {
     remainSec = calcRemain();
     if (remainSec <= 0) {
-      beep();
-      if (isWork) {
-        completed++;
-        notify("作業終了！休憩しましょう");
-        setPhase(false);
+      const wasWork = isWork();
+      halt();
+      playSound();
+      advance(true);
+      if (wasWork) {
+        notify(kind === "long" ? "作業終了！長い休憩に入りましょう" : "作業終了！休憩しましょう");
       } else {
         notify("休憩終了！作業を再開しましょう");
-        setPhase(true);
       }
-      // 自動で次のフェーズは開始せず、ユーザーの操作を待つ
-      halt();
+      // 自動開始がOFFなら、ユーザーの操作を待つ
+      if (cfg.auto) start();
       return;
     }
     render();
@@ -239,18 +559,21 @@
 
   function start() {
     if (timerId) return;
+    audio(); // ユーザー操作のタイミングで音声を有効化
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
     endAt = Date.now() + remainSec * 1000;
     timerId = setInterval(tick, 250);
     toggleBtn.textContent = "一時停止";
+    lockScreen();
   }
 
   function halt() {
     clearInterval(timerId);
     timerId = null;
     toggleBtn.textContent = "スタート";
+    unlockScreen();
   }
 
   function pause() {
@@ -259,19 +582,103 @@
     render();
   }
 
-  toggleBtn.addEventListener("click", () => {
-    timerId ? pause() : start();
-  });
+  function toggle() { timerId ? pause() : start(); }
 
-  resetBtn.addEventListener("click", () => {
+  function skip() {
+    const wasRunning = !!timerId;
     halt();
-    setPhase(isWork);
+    advance(false);
+    if (wasRunning) start();
+  }
+
+  function reset() {
+    halt();
+    setPhase(kind);
+  }
+
+  toggleBtn.addEventListener("click", toggle);
+  skipBtn.addEventListener("click", skip);
+  resetBtn.addEventListener("click", reset);
+
+  /* ---------- キーボードショートカット ---------- */
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
+    if (e.code === "Space") {
+      e.preventDefault();
+      if (t && t.tagName === "BUTTON") t.blur(); // ボタンの二重発火を防ぐ
+      toggle();
+    } else if (e.key === "r" || e.key === "R") {
+      reset();
+    } else if (e.key === "s" || e.key === "S") {
+      skip();
+    }
   });
 
-  workInput.addEventListener("change", () => { if (!timerId && isWork) setPhase(true); });
-  breakInput.addEventListener("change", () => { if (!timerId && !isWork) setPhase(false); });
+  /* ---------- 設定 ---------- */
+  function clampInput(input, min, max, fallback) {
+    let v = parseInt(input.value, 10);
+    if (!Number.isFinite(v)) v = fallback;
+    v = Math.min(max, Math.max(min, v));
+    input.value = v;
+    return v;
+  }
 
-  setPhase(true);
+  function onDurationChange(forKind) {
+    cfg.work = clampInput(workInput, 1, 120, 25);
+    cfg.brk = clampInput(breakInput, 1, 60, 5);
+    cfg.long = clampInput(longInput, 1, 90, 15);
+    cfg.every = clampInput(everyInput, 2, 12, 4);
+    save();
+    if (!timerId && kind === forKind) setPhase(kind);
+  }
+
+  workInput.addEventListener("change", () => onDurationChange("work"));
+  breakInput.addEventListener("change", () => onDurationChange("break"));
+  longInput.addEventListener("change", () => onDurationChange("long"));
+  everyInput.addEventListener("change", () => onDurationChange(null));
+
+  autoInput.addEventListener("change", () => { cfg.auto = autoInput.checked; save(); });
+  soundSel.addEventListener("change", () => { cfg.sound = soundSel.value; save(); playSound(); });
+  volumeInput.addEventListener("input", () => { cfg.volume = parseInt(volumeInput.value, 10); save(); });
+  volumeInput.addEventListener("change", playSound);
+  taskInput.addEventListener("input", () => { cfg.task = taskInput.value; save(); render(); });
+
+  /* ---------- テーマ（自動 → ライト → ダーク） ---------- */
+  const themeIcons = { auto: "◐", light: "☀", dark: "☾" };
+  const themeNames = { auto: "自動", light: "ライト", dark: "ダーク" };
+  function applyTheme() {
+    if (cfg.theme === "auto") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", cfg.theme);
+    themeBtn.textContent = themeIcons[cfg.theme];
+    themeBtn.title = `テーマ: ${themeNames[cfg.theme]}`;
+  }
+  themeBtn.addEventListener("click", () => {
+    const order = ["auto", "light", "dark"];
+    cfg.theme = order[(order.indexOf(cfg.theme) + 1) % order.length];
+    applyTheme();
+    save();
+  });
+
+  /* ---------- 初期化 ---------- */
+  load();
+  workInput.value = cfg.work;
+  breakInput.value = cfg.brk;
+  longInput.value = cfg.long;
+  everyInput.value = cfg.every;
+  autoInput.checked = cfg.auto;
+  soundSel.value = cfg.sound;
+  volumeInput.value = cfg.volume;
+  taskInput.value = cfg.task;
+  applyTheme();
+  setPhase("work");
+  renderChart();
+
+  // PWA（HTTPS または localhost で動作）
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
 </script>
 </body>
 </html>
